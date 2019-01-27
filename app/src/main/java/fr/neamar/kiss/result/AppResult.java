@@ -11,9 +11,13 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.graphics.Color;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Process;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.view.View;
@@ -245,6 +249,11 @@ public class AppResult extends Result {
             if (icon == null) {
                 icon = KissApplication.getApplication(context).getIconsHandler()
                         .getDrawableIconForPackage(className, this.appPojo.userHandle);
+
+                if (!this.appPojo.isEnabled) {
+                    // app is disabled (e.g. other profile disabled)
+                    icon.setColorFilter(Color.GRAY, PorterDuff.Mode.MULTIPLY);
+                }
             }
 
             return icon;

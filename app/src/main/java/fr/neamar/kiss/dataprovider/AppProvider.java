@@ -94,11 +94,18 @@ public class AppProvider extends Provider<AppPojo> {
             IntentFilter filter = new IntentFilter();
             filter.addAction(Intent.ACTION_MANAGED_PROFILE_ADDED);
             filter.addAction(Intent.ACTION_MANAGED_PROFILE_REMOVED);
+
+            // to support enabling/disabling work profile
+            filter.addAction(Intent.ACTION_MANAGED_PROFILE_AVAILABLE);
+            filter.addAction(Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE);
+
             this.registerReceiver(new BroadcastReceiver() {
                 @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
                 @Override
                 public void onReceive(Context context, Intent intent) {
-                    if (Objects.equals(intent.getAction(), Intent.ACTION_MANAGED_PROFILE_ADDED)) {
+                    if (Objects.equals(intent.getAction(), Intent.ACTION_MANAGED_PROFILE_ADDED)
+                            || Objects.equals(intent.getAction(), Intent.ACTION_MANAGED_PROFILE_AVAILABLE)
+                            || Objects.equals(intent.getAction(), Intent.ACTION_MANAGED_PROFILE_UNAVAILABLE)) {
                         AppProvider.this.reload();
                     } else if (Objects.equals(intent.getAction(), Intent.ACTION_MANAGED_PROFILE_REMOVED)) {
                         android.os.UserHandle profile = intent.getParcelableExtra(Intent.EXTRA_USER);

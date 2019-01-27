@@ -5,25 +5,35 @@ import android.appwidget.AppWidgetHost;
 import android.appwidget.AppWidgetHostView;
 import android.appwidget.AppWidgetManager;
 import android.appwidget.AppWidgetProviderInfo;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.Bundle;
+import android.os.Process;
+import android.os.UserManager;
 import android.view.ContextMenu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 
+import fr.neamar.kiss.KissApplication;
 import fr.neamar.kiss.MainActivity;
 import fr.neamar.kiss.R;
 
 class Widget extends Forwarder {
+
+    private static final int REQUEST_BIND_APPWIDGET = 11;
+    public static final int REQUEST_BIND_PENDING_APPWIDGET = 12;
+
     private static final int REQUEST_PICK_APPWIDGET = 9;
     private static final int REQUEST_CREATE_APPWIDGET = 5;
 
-    private static final int APPWIDGET_HOST_ID = 442;
+//    private static final int APPWIDGET_HOST_ID = 442;
     private static final String WIDGET_PREFERENCE_ID = "fr.neamar.kiss.widgetprefs";
 
     private SharedPreferences widgetPrefs;
@@ -48,8 +58,12 @@ class Widget extends Forwarder {
         // Initialize widget manager and host, restore widgets
         widgetPrefs = mainActivity.getSharedPreferences(WIDGET_PREFERENCE_ID, Context.MODE_PRIVATE);
 
-        mAppWidgetManager = AppWidgetManager.getInstance(mainActivity);
-        mAppWidgetHost = new AppWidgetHost(mainActivity, APPWIDGET_HOST_ID);
+//        mAppWidgetManager = AppWidgetManager.getInstance(getApp);
+//        mAppWidgetHost = new AppWidgetHost(mainActivity.getApplicationContext(), APPWIDGET_HOST_ID);
+
+        mAppWidgetManager = KissApplication.getAppWidgetManager();
+        mAppWidgetHost = KissApplication.getAppWidgetHost();
+
         widgetArea = mainActivity.findViewById(R.id.widgetLayout);
 
         restoreWidgets();
@@ -57,12 +71,12 @@ class Widget extends Forwarder {
 
     void onStart() {
         // Start listening for widget update
-        mAppWidgetHost.startListening();
+//        mAppWidgetHost.startListening();
     }
 
     void onStop() {
         // Stop listening for widget update
-        mAppWidgetHost.stopListening();
+//        mAppWidgetHost.stopListening();
     }
 
     void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -89,9 +103,58 @@ class Widget extends Forwarder {
             if (!widgetUsed) {
                 // request widget picker, a selection will lead to a call of onActivityResult
                 int appWidgetId = mAppWidgetHost.allocateAppWidgetId();
+
                 Intent pickIntent = new Intent(AppWidgetManager.ACTION_APPWIDGET_PICK);
                 pickIntent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+
+                    // this bit of code adds work profile widgets to the default widget picker
+                    //
+                    // for custom widgets to be shown in the default widget picker (AppWidgetPickActivity),
+                    // two extras must be added to the intent:
+                    // - EXTRA_CUSTOM_INFO: containing AppWidgetProviderInfos
+                    // - EXTRA_CUSTOM_EXTRAS: containing Bundles with provider and profile for each widget
+                    //
+                    // the size of both lists must match and data for the same widget
+                    // must be in the same position in both lists
+
+                    UserManager userMgr = (UserManager) mainActivity.getSystemService(Context.USER_SERVICE);
+
+                    ArrayList<AppWidgetProviderInfo> allWidgets = new ArrayList<>();
+                    ArrayList<Bundle> allExtras = new ArrayList<>();
+
+                    for (android.os.UserHandle user : userMgr.getUserProfiles()) {
+                        if (!Process.myUserHandle().equals(user)) {
+                            // only for users not the current
+                            for (AppWidgetProviderInfo info : mAppWidgetManager.getInstalledProvidersForProfile(user)) {
+                                // convert to kiss provider info
+//                                KissAppWidgetProviderInfo kissInfo = KissAppWidgetProviderInfo.fromProviderInfo(mainActivity, info);
+
+                                // add widgets from provider to list
+                                allWidgets.add(info);
+
+                                // add extras for widgets
+                                Bundle bdl = new Bundle();
+                                bdl.putParcelable(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider);
+                                bdl.putParcelable(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, user);
+
+                                Bundle bdlOptions = new Bundle();
+                                bdlOptions.putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, info.minHeight);
+                                bdl.putBundle(AppWidgetManager.EXTRA_APPWIDGET_OPTIONS, bdlOptions);
+
+                                allExtras.add(bdl);
+                            }
+                        }
+                    }
+
+//                    pickIntent.setExtrasClassLoader(KissAppWidgetProviderInfo.class.getClassLoader());
+                    pickIntent.putParcelableArrayListExtra(AppWidgetManager.EXTRA_CUSTOM_INFO, allWidgets);
+                    pickIntent.putParcelableArrayListExtra(AppWidgetManager.EXTRA_CUSTOM_EXTRAS, allExtras);
+                }
+
                 mainActivity.startActivityForResult(pickIntent, REQUEST_PICK_APPWIDGET);
+
             } else {
                 // if we already have a widget we remove it
                 removeAllWidgets();
@@ -127,7 +190,7 @@ class Widget extends Forwarder {
     private void restoreWidgets() {
         HashMap<String, Integer> widgetIds = (HashMap<String, Integer>) widgetPrefs.getAll();
         for (int appWidgetId : widgetIds.values()) {
-            addWidgetToLauncher(appWidgetId);
+            addWidgetToLauncher(appWidgetId, null);
         }
     }
 
@@ -136,25 +199,36 @@ class Widget extends Forwarder {
      *
      * @param appWidgetId id of widget to add
      */
-    private void addWidgetToLauncher(int appWidgetId) {
+    private void addWidgetToLauncher(int appWidgetId, Intent data) {
         // only add widgets if in minimal mode (may need launcher restart when turned on)
         if (prefs.getBoolean("history-hide", true)) {
             // remove empty list view when using widgets, this would block touches on the widget
             mainActivity.emptyListView.setVisibility(View.GONE);
+
             //add widget to view
-            AppWidgetProviderInfo appWidgetInfo = mAppWidgetManager.getAppWidgetInfo(appWidgetId);
+            AppWidgetProviderInfo appWidgetInfo;
+            if (data != null) {
+                appWidgetInfo = getAppWidgetInfo(data);
+            } else {
+                appWidgetInfo = mAppWidgetManager.getAppWidgetInfo(appWidgetId);
+            }
+
             if (appWidgetInfo == null) {
                 removeAllWidgets();
                 return;
             }
-            AppWidgetHostView hostView = mAppWidgetHost.createView(mainActivity, appWidgetId, appWidgetInfo);
+
+            AppWidgetHostView hostView = mAppWidgetHost.createView(this.mainActivity.getApplicationContext(), appWidgetId, appWidgetInfo);
             hostView.setMinimumHeight(appWidgetInfo.minHeight);
             hostView.setAppWidget(appWidgetId, appWidgetInfo);
+
             if (Build.VERSION.SDK_INT > 15) {
-                hostView.updateAppWidgetSize(null, appWidgetInfo.minWidth, appWidgetInfo.minHeight, appWidgetInfo.minWidth, appWidgetInfo.minHeight);
+//                hostView.updateAppWidgetSize(null, appWidgetInfo.minWidth, appWidgetInfo.minHeight, appWidgetInfo.minWidth, appWidgetInfo.minHeight);
             }
+
             widgetArea.addView(hostView);
         }
+
         // only one widget allowed so widgetUsed is true now, even if not added to view
         widgetUsed = true;
     }
@@ -195,7 +269,7 @@ class Widget extends Forwarder {
     private void addAppWidget(Intent data) {
         int appWidgetId = data.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1);
         //add widget
-        addWidgetToLauncher(appWidgetId);
+        addWidgetToLauncher(appWidgetId, data);
         // Save widget in preferences
         SharedPreferences.Editor widgetPrefsEditor = widgetPrefs.edit();
         widgetPrefsEditor.putInt(String.valueOf(appWidgetId), appWidgetId);
@@ -211,18 +285,63 @@ class Widget extends Forwarder {
     private void configureAppWidget(Intent data) {
         int appWidgetId = data.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1);
 
-        AppWidgetProviderInfo appWidget =
-                mAppWidgetManager.getAppWidgetInfo(appWidgetId);
+        AppWidgetProviderInfo appWidget = getAppWidgetInfo(data);
 
-        if (appWidget.configure != null) {
+        if (appWidget != null && appWidget.configure != null) {
             // Launch over to configure widget, if needed.
             Intent intent = new Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE);
             intent.setComponent(appWidget.configure);
             intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                ComponentName provider = data.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER);
+                android.os.UserHandle user = data.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE);
+                intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider);
+                intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, user);
+
+                // add extras for widgets
+                Bundle bdl = new Bundle();
+                bdl.putParcelable(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider);
+                bdl.putParcelable(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, user);
+                intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_OPTIONS, bdl);
+                intent.putExtra(AppWidgetManager.EXTRA_CUSTOM_EXTRAS, bdl);
+            }
+
             mainActivity.startActivityForResult(intent, REQUEST_CREATE_APPWIDGET);
         } else {
             // Otherwise, finish adding the widget.
             addAppWidget(data);
         }
     }
+
+    private AppWidgetProviderInfo getAppWidgetInfo(Intent data) {
+        int appWidgetId = data.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1);
+
+        // tries to get from AppWidgetManager (only for current user)
+        AppWidgetProviderInfo appWidget =
+                mAppWidgetManager.getAppWidgetInfo(appWidgetId);
+
+        if (appWidget == null) {
+            // try to get info by provider
+            ComponentName provider = data.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER);
+            android.os.UserHandle user = data.getParcelableExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE);
+            appWidget = getAppWidgetInfoByProvider(provider, user);
+        }
+
+        return appWidget;
+    }
+
+    private AppWidgetProviderInfo getAppWidgetInfoByProvider(ComponentName provider, android.os.UserHandle user) {
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            for (AppWidgetProviderInfo info : mAppWidgetManager.getInstalledProvidersForProfile(user)) {
+                if (info.provider.equals(provider)) {
+                    return info;
+                }
+            }
+        }
+
+        return null;
+    }
+
 }

@@ -8,6 +8,7 @@ import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.os.Build;
+import android.os.Process;
 import android.os.UserManager;
 import android.util.Log;
 
@@ -48,13 +49,21 @@ public class LoadAppPojos extends LoadPojos<AppPojo> {
             // Handle multi-profile support introduced in Android 5 (#542)
             for (android.os.UserHandle profile : manager.getUserProfiles()) {
                 UserHandle user = new UserHandle(manager.getSerialNumberForUser(profile), profile);
+
+                boolean isProfileEnabled = true;
+                if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    isProfileEnabled = !manager.isQuietModeEnabled(profile);
+                }
+
                 for (LauncherActivityInfo activityInfo : launcher.getActivityList(null, profile)) {
                     ApplicationInfo appInfo = activityInfo.getApplicationInfo();
 
                     String fullPackageName = user.addUserSuffixToString(appInfo.packageName, '#');
                     String id = user.addUserSuffixToString(pojoScheme + appInfo.packageName + "/" + activityInfo.getName(), '/');
 
-                    AppPojo app = new AppPojo(id, appInfo.packageName, activityInfo.getName(), user);
+                    boolean isAppEnabled = Process.myUserHandle().equals(activityInfo.getUser()) || isProfileEnabled;
+
+                    AppPojo app = new AppPojo(id, appInfo.packageName, activityInfo.getName(), user, isAppEnabled);
 
                     app.setName(activityInfo.getLabel().toString());
 
@@ -74,7 +83,7 @@ public class LoadAppPojos extends LoadPojos<AppPojo> {
             for (ResolveInfo info : manager.queryIntentActivities(mainIntent, 0)) {
                 ApplicationInfo appInfo = info.activityInfo.applicationInfo;
                 String id = pojoScheme + appInfo.packageName + "/" + info.activityInfo.name;
-                AppPojo app = new AppPojo(id, appInfo.packageName, info.activityInfo.name, new UserHandle());
+                AppPojo app = new AppPojo(id, appInfo.packageName, info.activityInfo.name, new UserHandle(), true);
 
                 app.setName(info.loadLabel(manager).toString());
 
